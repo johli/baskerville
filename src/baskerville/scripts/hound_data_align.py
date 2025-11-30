@@ -59,6 +59,13 @@ def main():
         help="Crop bp off each end [Default: %default]",
     )
     parser.add_option(
+        "--pad",
+        dest="pad_bp",
+        default=0,
+        type="int",
+        help="Pad each sequence with extra bp [Default: %default]",
+    )
+    parser.add_option(
         "-f",
         dest="folds",
         default=None,
@@ -236,6 +243,25 @@ def main():
     for gi in range(num_genomes):
         genome_chr_contigs.append(data.load_chromosomes(fasta_files[gi]))
 
+        if options.pad_bp > 0 :
+            # crop chromosomes
+            genome_chr_contigs_trim = {}
+
+            # loop over contigs
+            for chrom in genome_chr_contigs[gi] :
+                contig = genome_chr_contigs[gi][chrom][0]
+
+                # crop chromosome
+                genome_chr_contigs_trim[chrom] = [(min(int(options.pad_bp * 1.5), contig[1]), max(contig[1] - int(options.pad_bp * 1.5), 0))]
+
+            genome_chr_contigs[gi] = genome_chr_contigs_trim
+
+            # filter for large enough
+            genome_chr_contigs[gi] = {
+                ctg : genome_chr_contigs[gi][ctg]
+                for ctg in genome_chr_contigs[gi] if genome_chr_contigs[gi][ctg][0][1] - genome_chr_contigs[gi][ctg][0][0] >= 2 * options.seq_length
+            }
+
         # remove gaps
         if options.gap_files[gi]:
             genome_chr_contigs[gi] = data.split_contigs(
@@ -351,13 +377,24 @@ def main():
     ################################################################
     for gi in range(num_genomes):
         if options.umap_beds[gi] is not None:
+            # create padded model seqs
+            mseqs_genome_pad = []
+            for mseq in mseqs_genome[gi] :
+                mseqs_genome_pad.append(data.ModelSeq(
+                    mseq.genome, mseq.chr, mseq.start - options.pad_bp, mseq.end + options.pad_bp, mseq.label
+                ))
+            
             # annotate unmappable positions
             mseqs_unmap = data.annotate_unmap(
-                mseqs_genome[gi], options.umap_beds[gi], seq_tlength, options.pool_width
+                mseqs_genome_pad, options.umap_beds[gi], seq_tlength + 2 * options.pad_bp, options.pool_width
             )
 
             # filter unmappable
-            mseqs_map_mask = mseqs_unmap.mean(axis=1, dtype="float64") < options.umap_t
+            if options.pad_bp > 0 :
+                mseqs_map_mask = mseqs_unmap[:, options.pad_bp // options.pool_width:-options.pad_bp // options.pool_width].mean(axis=1, dtype="float64") < options.umap_t
+            else :
+                mseqs_map_mask = mseqs_unmap.mean(axis=1, dtype="float64") < options.umap_t
+            
             mseqs_genome[gi] = [
                 mseqs_genome[gi][si]
                 for si in range(len(mseqs_genome[gi]))
